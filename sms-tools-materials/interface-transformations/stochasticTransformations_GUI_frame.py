@@ -1,0 +1,116 @@
+# GUI frame for the stochasticTransformations_function.py
+
+import os
+import sys
+from tkinter import *  # notice lowercase 't' in tkinter here
+from tkinter import messagebox, filedialog
+
+import numpy as np
+from gui_layout import apply_responsive_grid, make_entry, place_entry
+import stochasticTransformations_function as sT
+from smstools.models import utilFunctions as UF
+
+
+class StochasticTransformations_frame:
+
+    def __init__(self, parent):
+
+        self.parent = parent
+        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.sounds_dir = os.path.normpath(os.path.join(self.base_dir, "..", "sounds"))
+        self.initUI()
+
+    def initUI(self):
+
+        Label(self.parent, text="inputFile:").grid(
+            row=0, column=0, sticky=W, padx=5, pady=(10, 2)
+        )
+
+        # TEXTBOX TO PRINT PATH OF THE SOUND FILE
+        self.filelocation = Entry(self.parent)
+        self.filelocation.focus_set()
+        self.filelocation["width"] = 25
+        self.filelocation.grid(row=0, column=0, sticky=W, padx=(70, 5), pady=(10, 2))
+        self.filelocation.delete(0, END)
+        self.filelocation.insert(0, os.path.join(self.sounds_dir, "rain.wav"))
+
+        # BUTTON TO BROWSE SOUND FILE
+        open_file = Button(
+            self.parent, text="...", command=self.browse_file
+        )  # see: def browse_file(self)
+        open_file.grid(
+            row=0, column=0, sticky=W, padx=(280, 6), pady=(10, 2)
+        )  # put it beside the filelocation textbox
+
+        # BUTTON TO PREVIEW SOUND FILE
+        preview = Button(
+            self.parent, text=">", command=lambda: UF.wavplay(self.filelocation.get())
+        )
+        preview.grid(row=0, column=0, sticky=W, padx=(325, 6), pady=(10, 2))
+
+        ## STOCHASTIC TRANSFORMATIONS ANALYSIS
+
+        # DECIMATION FACTOR
+        Label(self.parent, text="stocf:").grid(
+            row=1, column=0, sticky=W, padx=(5, 5), pady=(10, 2)
+        )
+        self.stocf = make_entry(self.parent)
+        self.stocf.grid(row=1, column=0, sticky=W, padx=(47, 5), pady=(10, 2))
+        self.stocf.delete(0, END)
+        self.stocf.insert(0, "0.1")
+
+        # TIME SCALING FACTORS
+        Label(self.parent, text="Time scaling factors (time, value pairs):").grid(
+            row=2, column=0, sticky=W, padx=5, pady=(5, 2)
+        )
+        self.timeScaling = place_entry(self.parent, row=3, padx=5, default="[0, 0, 1, 2]", width=35, sticky="we", pady=(0, 2))
+
+        # BUTTON TO DO THE SYNTHESIS
+        self.compute = Button(
+            self.parent,
+            text="Apply Transformation",
+            command=self.transformation_synthesis,
+            font=("TkDefaultFont", 11, "bold"),
+            padx=10,
+            pady=4,
+        )
+        self.compute.grid(row=13, column=0, padx=5, pady=(10, 15), sticky=W)
+
+        # BUTTON TO PLAY TRANSFORMATION SYNTHESIS OUTPUT
+        self.transf_output = Button(
+            self.parent,
+            text=">",
+            command=lambda: UF.wavplay(os.path.join(os.path.dirname(os.path.abspath(__file__)), "output_sounds", os.path.basename(self.filelocation.get())[:-4] + "_stochasticModelTransformation.wav")),
+        )
+        self.transf_output.grid(
+            row=13, column=0, padx=(165, 5), pady=(10, 15), sticky=W
+        )
+
+        # define options for opening file
+        self.file_opt = options = {}
+        options["defaultextension"] = ".wav"
+        options["filetypes"] = [("All files", ".*"), ("Wav files", ".wav")]
+        options["initialdir"] = self.sounds_dir
+        options["title"] = "Open a mono audio file .wav with sample frequency 44100 Hz"
+
+        apply_responsive_grid(self.parent)
+
+    def browse_file(self):
+
+        self.filename = filedialog.askopenfilename(**self.file_opt)
+
+        # set the text of the self.filelocation
+        self.filelocation.delete(0, END)
+        self.filelocation.insert(0, self.filename)
+
+    def transformation_synthesis(self):
+
+        try:
+            inputFile = self.filelocation.get()
+            stocf = float(self.stocf.get())
+            timeScaling = np.array(eval(self.timeScaling.get()))
+
+            sT.main(inputFile, stocf, timeScaling)
+
+        except ValueError as errorMessage:
+            messagebox.showerror("Input values error", errorMessage)

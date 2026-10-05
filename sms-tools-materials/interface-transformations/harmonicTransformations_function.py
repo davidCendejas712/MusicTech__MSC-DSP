@@ -1,0 +1,179 @@
+from plot_helpers import setup_plot_style, plot_waveform, plot_frequency_tracks, _mask_frequencies, _plot_waveform
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.signal import get_window
+import sys, os
+from smstools.models import sineModel as SM
+from smstools.models import harmonicModel as HM
+from smstools.transformations import sineTransformations as ST
+from smstools.transformations import harmonicTransformations as HT
+from smstools.models import utilFunctions as UF
+_this_dir = os.path.dirname(os.path.abspath(__file__))
+if _this_dir not in sys.path:
+    sys.path.insert(0, _this_dir)
+import plot_helpers as PH
+
+_sounds_dir = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "sounds"))
+
+
+def analysis(
+    inputFile=os.path.join(_sounds_dir, "vignesh.wav"),
+    window="blackman",
+    M=1201,
+    N=2048,
+    t=-90,
+    minSineDur=0.1,
+    nH=100,
+    minf0=130,
+    maxf0=300,
+    f0et=7,
+    harmDevSlope=0.01,
+):
+    """
+    Analyze a sound with the harmonic model
+    inputFile: input sound file (monophonic with sampling rate of 44100)
+    window: analysis window type (rectangular, hanning, hamming, blackman, blackmanharris)
+    M: analysis window size
+    N: fft size (power of two, bigger or equal than M)
+    t: magnitude threshold of spectral peaks
+    minSineDur: minimum duration of sinusoidal tracks
+    nH: maximum number of harmonics
+    minf0: minimum fundamental frequency in sound
+    maxf0: maximum fundamental frequency in sound
+    f0et: maximum error accepted in f0 detection algorithm
+    harmDevSlope: allowed deviation of harmonic tracks, higher harmonics have higher allowed deviation
+    returns inputFile: input file name; fs: sampling rate of input file, tfreq,
+                                            tmag: sinusoidal frequencies and magnitudes
+    """
+
+    # size of fft used in synthesis
+    Ns = 512
+
+    # hop size (has to be 1/4 of Ns)
+    H = 128
+
+    # read input sound
+    fs, x = UF.wavread(inputFile)
+
+    # compute analysis window
+    w = get_window(window, M)
+
+    # compute the harmonic model of the whole sound
+    hfreq, hmag, hphase = HM.harmonicModelAnal(
+        x, fs, w, N, H, t, nH, minf0, maxf0, f0et, harmDevSlope, minSineDur
+    )
+
+    # synthesize the sines without original phases
+    y = SM.sineModelSynth(hfreq, hmag, np.array([]), Ns, H, fs)
+
+    # output sound file (monophonic with sampling rate of 44100)
+    stem = os.path.basename(inputFile)[:-4]
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output_sounds")
+    os.makedirs(output_dir, exist_ok=True)
+    outputFile = os.path.join(output_dir, f"{stem}_harmonicModel.wav")
+
+    # write the sound resulting from the inverse stft
+    UF.wavwrite(y, fs, outputFile)
+
+    # create figure to show plots
+    plt.figure(figsize=(9, 6))
+
+    # frequency range to plot
+    maxplotfreq = 5000.0
+
+    # plot the input sound
+    plt.subplot(3, 1, 1)
+    PH.plot_waveform(plt.gca(), x, fs, title="input sound: x")
+
+    if hfreq.shape[1] > 0:
+        plt.subplot(3, 1, 2)
+        PH.plot_frequency_tracks(plt.gca(), hfreq, fs, H, title="frequencies of harmonic tracks", max_freq=maxplotfreq)
+
+    # plot the output sound
+    plt.subplot(3, 1, 3)
+    PH.plot_waveform(plt.gca(), y, fs, title="output sound: y")
+
+    plt.tight_layout()
+    plt.show(block=False)
+
+    return inputFile, fs, hfreq, hmag
+
+
+def transformation_synthesis(
+    inputFile,
+    fs,
+    hfreq,
+    hmag,
+    freqScaling=np.array([0, 2.0, 1, 0.3]),
+    freqStretching=np.array([0, 1, 1, 1.5]),
+    timbrePreservation=1,
+    timeScaling=np.array([0, 0.0, 0.671, 0.671, 1.978, 1.978 + 1.0]),
+):
+    """
+    Transform the analysis values returned by the analysis function and synthesize the sound
+    inputFile: name of input file
+    fs: sampling rate of input file
+    tfreq, tmag: sinusoidal frequencies and magnitudes
+    freqScaling: frequency scaling factors, in time-value pairs
+    freqStretchig: frequency stretching factors, in time-value pairs
+    timbrePreservation: 1 preserves original timbre, 0 it does not
+    timeScaling: time scaling factors, in time-value pairs
+    """
+
+    # size of fft used in synthesis
+    Ns = 512
+
+    # hop size (has to be 1/4 of Ns)
+    H = 128
+
+    # frequency scaling of the harmonics
+    yhfreq, yhmag = HT.harmonicFreqScaling(
+        hfreq, hmag, freqScaling, freqStretching, timbrePreservation, fs
+    )
+
+    # time scale the sound
+    yhfreq, yhmag = ST.sineTimeScaling(yhfreq, yhmag, timeScaling)
+
+    # synthesis
+    y = SM.sineModelSynth(yhfreq, yhmag, np.array([]), Ns, H, fs)
+
+    # write output sound
+    stem = os.path.basename(inputFile)[:-4]
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output_sounds")
+    os.makedirs(output_dir, exist_ok=True)
+    outputFile = os.path.join(output_dir, f"{stem}_harmonicModelTransformation.wav")
+    UF.wavwrite(y, fs, outputFile)
+
+    # create figure to plot
+    plt.figure(figsize=(12, 6))
+
+    # frequency range to plot
+    maxplotfreq = 15000.0
+
+    # plot the transformed sinusoidal frequencies
+    plt.subplot(2, 1, 1)
+    if yhfreq.shape[1] > 0:
+        tracks = _mask_frequencies(yhfreq, maxplotfreq)
+        numFrames = int(tracks[:, 0].size)
+        frmTime = H * np.arange(numFrames) / float(fs)
+        plt.plot(frmTime, tracks)
+        plt.title("transformed harmonic tracks")
+        plt.autoscale(tight=True)
+
+    # plot the output sound
+    plt.subplot(2, 1, 2)
+    _plot_waveform(y, fs, "output sound: y")
+
+    plt.tight_layout()
+    plt.show()
+
+
+if __name__ == "__main__":
+
+    # analysis
+    inputFile, fs, hfreq, hmag = analysis()
+
+    # transformation and synthesis
+    transformation_synthesis(inputFile, fs, hfreq, hmag)
+
+    plt.show()

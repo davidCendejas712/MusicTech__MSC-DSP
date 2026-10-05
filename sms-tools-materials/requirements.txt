@@ -1,0 +1,8 @@
+sms-tools
+notebook
+matplotlib
+numpy
+scipy
+ipython
+essentia
+git+https://github.com/MTG/freesound-python
